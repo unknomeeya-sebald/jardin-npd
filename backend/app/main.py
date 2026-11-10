@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from . import actions, auth, notify
+from . import actions, auth, clone, notify
 from .db import DB_KIND, Base, engine, get_db, SessionLocal
 from .engine.absorb import absorb
 from .engine.backcalc import TaskDef, schedule
@@ -44,6 +44,7 @@ app.add_middleware(
 )
 app.include_router(auth.router)
 app.include_router(actions.router)
+app.include_router(clone.router)
 # 아래 api 라우터의 경로는 모두 로그인(Bearer 토큰)이 필요하다. /api/health 만 예외.
 api = APIRouter(dependencies=[Depends(auth.current_user)])
 

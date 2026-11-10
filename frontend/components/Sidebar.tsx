@@ -19,6 +19,7 @@ const I = {
   product: "M4 7.5l8-4 8 4v9l-8 4-8-4zM4 7.5l8 4 8-4M12 11.5v9",
   task: "M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01",
   holiday: "M4 6h16v14H4zM4 10.5h16M8.5 3.5v4M15.5 3.5v4",
+  calendar: "M4 6h16v14H4zM4 10.5h16M8.5 3.5v4M15.5 3.5v4M8 14h3M8 17h6",
   settings: "M4 7h10M18 7h2M4 17h4M12 17h8M14 4.5v5M8 14.5v5",
   sun: "M12 8a4 4 0 100 8 4 4 0 000-8zM12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4",
   moon: "M20 14.5A8 8 0 019.5 4a8 8 0 1010.5 10.5z",
@@ -33,6 +34,7 @@ export const MENU: Group[] = [
     items: [
       { href: "/gantt", label: "간트 타임라인", icon: I.gantt },
       { href: "/absorb", label: "지연 흡수", icon: I.absorb },
+      { href: "/schedule", label: "일정관리", icon: I.calendar },
     ],
   },
   {
