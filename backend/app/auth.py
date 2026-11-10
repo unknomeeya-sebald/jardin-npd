@@ -2,7 +2,7 @@
 
 - 비밀번호: scrypt(솔트 16바이트) 해시 저장, 평문은 저장하지 않음
 - 토큰: HMAC-SHA256 서명한 `base64(payload).base64(sig)` (payload = 사용자 id·만료시각)
-- 서명 키: `.env`의 AUTH_SECRET. 없으면 기동할 때마다 새 키를 만든다(재기동 시 다시 로그인 필요)
+- 서명 키: `.env`의 AUTH_SECRET(없으면 JWT_SECRET). 둘 다 없으면 기동할 때마다 새 키를 만든다(재기동 시 다시 로그인 필요)
 """
 from __future__ import annotations
 
@@ -26,10 +26,11 @@ from .db import Base, get_db
 
 log = logging.getLogger("npd.auth")
 
-SECRET = os.getenv("AUTH_SECRET") or ""
+# .env·Cloud Run에는 JWT_SECRET 이름으로 들어가 있어 둘 다 받는다
+SECRET = os.getenv("AUTH_SECRET") or os.getenv("JWT_SECRET") or ""
 if not SECRET:
     SECRET = secrets.token_hex(32)
-    log.warning("AUTH_SECRET 없음: 임시 키 사용(서버를 다시 켜면 모두 다시 로그인해야 함)")
+    log.warning("AUTH_SECRET·JWT_SECRET 없음: 임시 키 사용(서버를 다시 켜면 모두 다시 로그인해야 함)")
 TOKEN_TTL = int(os.getenv("AUTH_TOKEN_TTL_HOURS", "12")) * 3600
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 

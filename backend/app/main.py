@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from . import actions, auth, clone, notify
+from . import actions, auth, clone, notify, sched_models  # noqa: F401  (sched_models: npd_sched_* 테이블 등록)
 from .db import DB_KIND, Base, engine, get_db, SessionLocal
 from .engine.absorb import absorb
 from .engine.backcalc import TaskDef, schedule
