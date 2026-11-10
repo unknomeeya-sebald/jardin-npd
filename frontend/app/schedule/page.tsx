@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { PageHeader } from "@/components/ui";
+import { useEffect, useRef, useState } from "react";
+import { Notice, PageHeader } from "@/components/ui";
 import { API } from "@/lib/api";
 import { clearAuth, getToken } from "@/lib/auth";
+import { applySkinVars, skinHtml } from "@/lib/scheduleSkin";
 
 /** 원본 화면 (Cloudflare Access 로그인 필요) */
 const ORIGIN_URL = "https://jardin-npd.pages.dev/nb#A";
@@ -18,6 +19,18 @@ const FIRST_VIEW = "A";
 export default function SchedulePage() {
   const [src, setSrc] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const frame = useRef<HTMLIFrameElement>(null);
+
+  // 앱 테마(밝게/어둡게)를 iframe 안에도 반영
+  const skin = () => {
+    const doc = frame.current?.contentDocument;
+    if (doc?.documentElement) applySkinVars(doc);
+  };
+  useEffect(() => {
+    const mo = new MutationObserver(skin);
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => mo.disconnect();
+  }, []);
 
   useEffect(() => {
     let url: string | null = null;
@@ -43,7 +56,7 @@ export default function SchedulePage() {
       }
       const html = await r.text();
       if (!alive) return;
-      url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+      url = URL.createObjectURL(new Blob([skinHtml(html)], { type: "text/html;charset=utf-8" }));
       setSrc(`${url}#${FIRST_VIEW}`);
     })();
     return () => {
@@ -59,18 +72,20 @@ export default function SchedulePage() {
         desc="NPD 일정(신제품 개발 일정 · 담당자 현황) 화면을 그대로 옮겼습니다. 고친 내용은 이 브라우저에만 저장되며, 정본 반영은 엑셀 내려받기로 합니다."
       >
         <a href={ORIGIN_URL} target="_blank" rel="noopener noreferrer"
-           className="rounded-lg border border-line px-3 py-1.5 text-xs text-muted hover:text-ink">
+           className="btn-quiet border border-line">
           원본 열기 ↗
         </a>
       </PageHeader>
 
-      {err && <p className="rounded-lg border border-line bg-surface p-4 text-sm text-bad">{err}</p>}
-      {!err && !src && <p className="text-sm text-muted">일정관리 화면을 불러오는 중…</p>}
+      {err && <div className="mt-4"><Notice tone="bad">{err}</Notice></div>}
+      {!err && !src && <p className="mt-4 text-sm text-muted">일정관리 화면을 불러오는 중…</p>}
       {src && (
         <iframe
+          ref={frame}
+          onLoad={skin}
           title="일정관리"
           src={src}
-          className="h-[calc(100vh-170px)] min-h-[640px] w-full rounded-xl border border-line bg-white"
+          className="mt-4 h-[calc(100vh-170px)] min-h-[640px] w-full rounded-[14px] border border-line bg-bg shadow-panel"
         />
       )}
     </>
