@@ -89,3 +89,66 @@ def test_import_api_accepts_xlsx_and_rejects_duplicates():
     r = client.post("/api/tasks/import", headers=h, files={"file": ("ok.xlsx", ok)})
     assert r.status_code == 200 and r.json() == {"imported": 2}
     assert [t["name"] for t in client.get("/api/tasks", headers=h).json()] == ["가", "나"]
+
+
+# ---------- 정본 통합 엑셀(「역산 계산기」 시트) ----------
+def _calc_workbook(tp_head=("NEW|표준", "NEW|QUICK")) -> bytes:
+    wb = openpyxl.Workbook()
+    wb.active.title = "NEW"
+    wb.active.append(["연구원", "마케팅", "품목"])  # 제품 일정 시트(Task 기준 아님)
+    ws = wb.create_sheet("역산 계산기")
+    ws.append(["역산 계산기"])
+    ws.append([None, "No", "담당부서", "Task", "기준", "소요"])
+    ws.append([None, 1, "마케팅", "컨셉 확정", None, "5일"])
+    ws.append([None, 2, "영업", "입점 제안", "착수", "15일"])
+    ws.append([None, 3, "생산", "세트 생산", None, "-"])
+    ws.append([None, 4, "마케팅", "출시", None, "1일"])
+    ws.append([])
+    ws.append([None, "No", None, "Task", "후행 Task 1", "후행 Task 2", *tp_head, *tp_head])
+    ws.append([None, 1, None, "컨셉 확정", "입점 제안", "세트 생산", 30, 20, 5, 2])
+    ws.append([None, 2, None, "입점 제안", "출시", None, 25.0, 18, 15, 10])
+    ws.append([None, 3, None, "세트 생산", "출시", None, 0, 9, 0, 4])
+    ws.append([None, 4, None, "출시", None, None, 1, 1, 1, 1])
+    ws.append([])
+    ws.append([None, "[수식 설계] 설명 줄"])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_calc_sheet_default_type_process():
+    rows = rows_from_upload("NPD_교정.xlsx", _calc_workbook())
+    got = [(t.no, t.name, t.start_offset, t.duration, t.basis, t.predecessors, t.note) for t in parse_task_rows(rows)]
+    assert got == [
+        (1, "컨셉 확정", 30, 5, "완료", None, "NEW|표준 기준 · 담당 마케팅"),
+        (2, "입점 제안", 25, 15, "착수", "1", "NEW|표준 기준 · 담당 영업"),
+        # 3 세트 생산: 소요 0 → 이 유형에서 생략
+        (4, "출시", 1, 1, "완료", "2", "NEW|표준 기준 · 담당 마케팅"),
+    ]
+
+
+def test_calc_sheet_other_type_process_keeps_task_3():
+    rows = rows_from_upload("a.xlsx", _calc_workbook(), "NEW|QUICK")
+    got = [(t.no, t.start_offset, t.duration, t.predecessors) for t in parse_task_rows(rows)]
+    assert got == [(1, 20, 2, None), (2, 18, 10, "1"), (3, 9, 4, "1"), (4, 1, 1, "2,3")]
+
+
+def test_calc_sheet_missing_type_process_is_error():
+    with pytest.raises(ValueError, match=r"NEW\|표준 열"):
+        rows_from_upload("a.xlsx", _calc_workbook(tp_head=("리뉴얼|표준", "리뉴얼|QUICK")))
+
+
+def test_import_api_inherits_basis_by_name():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    r = client.post("/api/auth/signup", json={"email": "import-test2@jardin.co.kr", "name": "테스트", "password": "test1234"})
+    h = {"Authorization": f"Bearer {r.json()['token']}"}
+    first = _xlsx([HEAD[:2] + ["basis"], [7, "입점 제안", "착수"], [8, "출시", None]])
+    assert client.post("/api/tasks/import", headers=h, files={"file": ("a.xlsx", first)}).status_code == 200
+    # 기준 열이 없는 파일을 올려도 같은 이름 Task의 「착수」가 유지된다
+    second = _xlsx([HEAD[:2], [2, "입점 제안"], [9, "출시"]])
+    assert client.post("/api/tasks/import", headers=h, files={"file": ("b.xlsx", second)}).status_code == 200
+    assert {t["name"]: t["basis"] for t in client.get("/api/tasks", headers=h).json()} == {"입점 제안": "착수", "출시": "완료"}

@@ -2,7 +2,7 @@ import { clearAuth, getToken, type User } from "@/lib/auth";
 
 export const API = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8000";
 
-export type Signal = "초록" | "노랑" | "빨강" | "확인 필요";
+export type Signal = "초록" | "노랑" | "빨강" | "회색" | "확인 필요";
 
 export interface Product {
   id: number;
@@ -30,6 +30,14 @@ export interface SchedTask {
   status: string;
   note: string | null;
   actual_end: string | null;
+  change_date?: string | null;
+  state?: string | null;
+  estimated?: boolean;
+  inferred?: boolean;
+  expected_start?: string | null;
+  expected_end?: string | null;
+  delay?: number | null;
+  fixed?: boolean;
   signal: Signal;
   slack: number | null;
   reason: string;
@@ -41,6 +49,7 @@ export interface Schedule {
   threshold: number;
   tasks: SchedTask[];
   red_count: number;
+  summary?: { expected_launch: string; launch_impact_days: number; signal: Signal };
 }
 
 export interface Holiday {
@@ -77,6 +86,9 @@ export interface TaskBase {
   predecessors: string | null;
   buffer_days: number | null;
   note: string | null;
+  dept?: string | null;
+  fixed_end?: number | null;
+  input_source?: string | null; // 엑셀 | 앱 | 디자인 시트 | 없음
 }
 
 export type Settings = Record<string, { value: string; note: string | null }>;

@@ -11,16 +11,17 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from . import actions, auth, clone, notify, sched_models  # noqa: F401  (sched_models: npd_sched_* 테이블 등록)
-from .db import DB_KIND, Base, engine, get_db, SessionLocal
+from .db import DB_KIND, Base, engine, ensure_columns, get_db, SessionLocal
 from .engine.absorb import absorb
 from .engine.backcalc import TaskDef, schedule
 from .engine.calendar import BusinessCalendar, HolidayNotRegistered
 from .engine.concurrent import overlaps
-from .engine.status import judge
-from .models import Actual, Holiday, Product, Setting, Task
+from .engine import linked
+from .models import Actual, Holiday, Product, Setting, Task, TaskCombo
 from .seed import parse_task_rows, rows_from_upload, seed
 
 Base.metadata.create_all(engine)
+ensure_columns()  # 이미 있는 테이블에 새 칸 더하기(dept, fixed_end, state …)
 with SessionLocal() as _s:
     seed(_s)
 
@@ -52,12 +53,26 @@ def calendar_from_db(db: Session) -> BusinessCalendar:
     return BusinessCalendar([h.date for h in db.scalars(select(Holiday))])
 
 
-def taskdefs_from_db(db: Session) -> list[TaskDef]:
+def taskdefs_from_db(db: Session, type_process: str | None = None) -> list[TaskDef]:
+    """Task 기준. 유형|프로세스 조합 값(npd_task_combo)이 있으면 그 착수 역산·소요를 쓴다.
+
+    조합에서 소요 0인 Task는 그 유형에서 생략하는 Task라 값을 비워 「확인 필요」(계산 안 함)로 둔다.
+    조합 값이 없는 유형이면 npd_tasks의 값(NEW|표준)을 그대로 쓴다.
+    """
+    combo = {}
+    if type_process:
+        combo = {c.task_no: c for c in db.scalars(select(TaskCombo).where(TaskCombo.type_process == type_process))}
     out = []
     for t in db.scalars(select(Task).order_by(Task.no)):
         preds = [int(x) for x in (t.predecessors or "").replace(" ", "").split(",") if x]
-        out.append(TaskDef(t.no, t.name, t.start_offset, t.duration, t.basis, t.phase, preds,
-                           t.buffer_days, t.note))
+        start, dur, note = t.start_offset, t.duration, t.note
+        if combo:
+            c = combo.get(t.no)
+            if c is None or c.duration == 0:
+                start, dur, note = None, None, f"{type_process}에서 생략"
+            else:
+                start, dur = c.start_offset, c.duration
+        out.append(TaskDef(t.no, t.name, start, dur, t.basis, t.phase, preds, t.buffer_days, note))
     return out
 
 
@@ -77,24 +92,52 @@ def get_product(db: Session, pid: int) -> Product:
 
 def scheduled(db: Session, p: Product):
     try:
-        return schedule(p.launch_date, taskdefs_from_db(db), calendar_from_db(db))
+        return schedule(p.launch_date, taskdefs_from_db(db, f"{p.product_type}|{p.process}"), calendar_from_db(db))
     except HolidayNotRegistered as e:
         raise HTTPException(422, f"C-05: {e}") from e
 
 
 def schedule_rows(db: Session, p: Product, as_of: date) -> list[dict]:
-    """예정 일정 + 실적 + 신호등 판정"""
+    """기준 일정 + 실적·변경 예정일 + 연동 예상일정 + 신호등 판정"""
     cal = calendar_from_db(db)
     threshold = setting_int(db, "yellow_threshold")
-    actuals = {a.task_no: a.actual_end for a in db.scalars(select(Actual).where(Actual.product_id == p.id))}
+    tp = f"{p.product_type}|{p.process}"
+    inputs = {a.task_no: {"state": a.state, "actual_end": a.actual_end, "change_date": a.change_date,
+                          "estimated": a.estimated}
+              for a in db.scalars(select(Actual).where(Actual.product_id == p.id))}
+    # 그 유형에서 생략하는 Task(조합 소요 0)는 「해당 없음」과 같게 회색으로 본다
+    for no in db.scalars(select(TaskCombo.task_no).where(TaskCombo.type_process == tp, TaskCombo.duration == 0)):
+        inputs[no] = {"state": linked.NA, "skip_reason": f"{tp}에서 생략"}
+    fixed = set(db.scalars(select(Task.no).where(Task.fixed_end.is_not(None))))
+    source = {no: src for no, src in db.execute(select(Task.no, Task.input_source)).all()}
+    tasks = scheduled(db, p)
+    inputs = linked.past_as_done(inputs, as_of)  # 지난 변경 예정일 = 그 날 완료
+    inputs = linked.infer_done(tasks, inputs)  # 후행이 완료된 입력 없는 Task = 완료 추정
+    try:
+        exp = linked.expect(tasks, inputs, cal)
+    except ValueError as e:  # 선후관계 순환
+        raise HTTPException(422, str(e)) from e
+    iso = lambda v: v.isoformat() if v else None  # noqa: E731
     rows = []
-    for t in scheduled(db, p):
-        d = t.to_dict()
-        a = actuals.get(t.no)
-        d["actual_end"] = a.isoformat() if a else None
-        d |= judge(t.end, a, as_of, threshold, cal)
+    for t in tasks:
+        d, i, x = t.to_dict(), inputs.get(t.no) or {}, exp[t.no]
+        d |= {"actual_end": iso(i.get("actual_end")), "change_date": iso(i.get("change_date")),
+              "state": i.get("state"), "estimated": bool(i.get("estimated")), "inferred": bool(i.get("inferred")),
+              "from_past": bool(i.get("from_past")),
+              "expected_start": iso(x["expected_start"]), "expected_end": iso(x["expected_end"]),
+              "delay": x["delay"], "fixed": t.no in fixed, "input_source": source.get(t.no)}
+        d |= linked.judge(x, i, as_of, threshold, p.launch_date, t.no in fixed, cal,
+                          linked.excluded_reason(source.get(t.no)))
         rows.append(d)
     return rows
+
+
+def product_summary(db: Session, p: Product, rows: list[dict]) -> dict:
+    """예상 출시일·출시 영향(영업일)·제품 신호등"""
+    r = linked.product_signal(
+        [{"signal": x["signal"], "expected_end": date.fromisoformat(x["expected_end"]) if x["expected_end"] else None}
+         for x in rows], p.launch_date, calendar_from_db(db))
+    return r | {"expected_launch": r["expected_launch"].isoformat()}
 
 
 def check_alerts(as_of: date) -> dict:
@@ -140,7 +183,8 @@ def health(db: Session = Depends(get_db)):
 
 @api.get("/api/tasks")
 def list_tasks(db: Session = Depends(get_db)):
-    cols = ["no", "name", "phase", "start_offset", "duration", "basis", "predecessors", "buffer_days", "note"]
+    cols = ["no", "name", "phase", "start_offset", "duration", "basis", "predecessors", "buffer_days", "note",
+            "dept", "fixed_end", "input_source"]
     return [{c: getattr(t, c) for c in cols} for t in db.scalars(select(Task).order_by(Task.no))]
 
 
@@ -148,12 +192,19 @@ def list_tasks(db: Session = Depends(get_db)):
 async def import_tasks(file: UploadFile, db: Session = Depends(get_db)):
     """Task 기준 데이터 파일(CSV 또는 엑셀 .xlsx)로 전체를 바꾼다(열: no,name,phase,start_offset,duration,basis,predecessors,buffer_days,note)."""
     try:
-        rows = parse_task_rows(rows_from_upload(file.filename or "", await file.read()))
+        raw = rows_from_upload(file.filename or "", await file.read())
+        # 파일에 기준(완료·착수)이 비어 있으면 같은 이름의 기존 Task 기준을 이어받는다(예: 입점 제안 = 착수)
+        old_basis = {t.name: t.basis for t in db.scalars(select(Task))}
+        for r in raw:
+            if not (r.get("basis") or "").strip():
+                r["basis"] = old_basis.get((r.get("name") or "").strip(), "")
+        rows = parse_task_rows(raw)
     except (KeyError, ValueError) as e:
         raise HTTPException(400, f"파일 형식 오류: {e}") from e
     if len({t.no for t in rows}) != len(rows):
         raise HTTPException(400, "파일 형식 오류: no(번호)가 겹치는 행이 있습니다")
     db.execute(delete(Actual))
+    db.execute(delete(TaskCombo))  # 조합 값은 정본 엑셀 변환기(import_npd)가 다시 채운다
     db.execute(delete(Task))
     db.add_all(rows)
     db.commit()
@@ -195,7 +246,7 @@ def list_products(db: Session = Depends(get_db)):
 @api.post("/api/products", status_code=201)
 def create_product(body: ProductIn, db: Session = Depends(get_db)):
     cal = calendar_from_db(db)
-    tasks = taskdefs_from_db(db)
+    tasks = taskdefs_from_db(db, f"{body.product_type}|{body.process}")
     try:  # C-05: 미등록 연도면 생성 막음
         schedule(body.launch_date, tasks, cal)
     except HolidayNotRegistered as e:
@@ -228,7 +279,8 @@ def product_schedule(pid: int, as_of: date | None = None, db: Session = Depends(
     return {"product": {"id": p.id, "name": p.name, "launch_date": p.launch_date.isoformat(),
                         "product_type": p.product_type, "process": p.process},
             "as_of": as_of.isoformat(), "threshold": threshold, "tasks": rows,
-            "red_count": sum(1 for r in rows if r["signal"] == "빨강")}
+            "red_count": sum(1 for r in rows if r["signal"] == "빨강"),
+            "summary": product_summary(db, p, rows)}
 
 
 @api.put("/api/products/{pid}/actuals/{task_no}")
@@ -241,6 +293,9 @@ def put_actual(pid: int, task_no: int, body: ActualIn, db: Session = Depends(get
         a = Actual(product_id=pid, task_no=task_no)
         db.add(a)
     a.actual_end = body.actual_end
+    # 화면에서 넣은 완료일은 추정이 아니다. 지우면 엑셀에서 온 「완료」 표시도 함께 지운다
+    if body.actual_end or a.state == linked.DONE:
+        a.state, a.estimated = (linked.DONE if body.actual_end else None), False
     db.commit()
     notify.notify_red(db, get_product(db, pid), schedule_rows(db, get_product(db, pid), date.today()))
     return {"product_id": pid, "task_no": task_no,

@@ -26,7 +26,7 @@ export default function SignalsPage() {
     <>
       <PageHeader
         title="신호등 현황"
-        desc={<>예정 종료일 안에 끝냈거나 여유가 {th}영업일보다 많으면 초록, {th}영업일 이하로 남으면 노랑, 기한이 지났는데 미완료이거나 늦게 끝냈으면 빨강입니다.</>}
+        desc={<>완료·해당 없음은 회색입니다. 예상 종료일이 지났는데 미완료이거나, 고정일 Task가 밀리거나, 예상 종료가 출시일을 넘으면 빨강, 기준보다 늦지만 출시일 안이거나 여유가 {th}영업일 이하이면 노랑, 그 외는 초록입니다. 입력처가 없는 Task(입력 원천이 엑셀·앱이 아님)는 입력이 들어오기 전까지 판정에서 빼고 「확인 필요」로 둡니다. 예상 종료일은 실적·변경 예정일과 선행 Task 지연을 반영한 날짜입니다.</>}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -44,6 +44,13 @@ export default function SignalsPage() {
                 <span className={`num text-3xl font-semibold tracking-[-0.03em] ${c["빨강"] ? "text-bad" : "text-ink"}`}>{c["빨강"]}</span>
                 <span className="text-[13px] text-muted">건 지연</span>
               </div>
+              {s.summary && (
+                <p className={`mt-2 text-xs ${s.summary.launch_impact_days > 0 ? "font-medium text-bad" : "text-muted"}`}>
+                  {s.summary.launch_impact_days > 0
+                    ? <>예상 출시 <span className="num">{s.summary.expected_launch}</span> · 출시 영향 +{s.summary.launch_impact_days}영업일</>
+                    : "출시 영향 없음"}
+                </p>
+              )}
               <SignalBar counts={c} className="mt-4" />
             </button>
           );

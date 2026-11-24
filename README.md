@@ -60,6 +60,22 @@ python -m app.tools.compare        # 1교시: 엔진 ↔ 엑셀 일치 표 (일�
 | `data/tasks_seed.csv` | Task 39행 (`no,name,phase,start_offset,duration,basis,predecessors,buffer_days,note`) | 16개만 값 있음(회신 v08 부록 B, NEW\|표준). 23개 「확인 필요」 |
 | `data/holidays.csv` | 2026–2027 공휴일 28건 | 엑셀 29건과 대조 필요, 공동연차 미입력 |
 
+### NPD 정본 엑셀 변환기 (39-Task)
+
+```bash
+cd backend
+python -m app.tools.import_npd 파일.xlsx            # 읽고 건수·읽지 못한 칸만 보여 줌(DB는 안 바꿈)
+python -m app.tools.import_npd 파일.xlsx --apply    # .env 의 Postgres에 넣음(로컬은 --allow-sqlite 추가)
+```
+
+- 「역산 계산기」 → `npd_tasks` 39행 전면 교체(이름·담당부서 `dept`·선행 `predecessors`·고정 완료 `fixed_end`), `npd_task_combo`(Task × 유형|프로세스 8조합의 착수 역산·소요, 소요 0 = 생략), `npd_holidays`(없는 날짜만 더함)
+- 「NEW」 제품 행 → `npd_products`(이름이 같으면 고침), 「진행사항」 행 → `npd_actuals`(`state` 완료·예정변경·해당없음, `change_date`, `estimated`). 단계 칸은 「기준일정」의 「연결 Task (역산 계산기)」 행으로 Task에 연결
+- 해석하지 못한 칸은 `npd_data_quality`(시트·칸·원문·사유). 담당자 이름은 읽지 않는다
+- `--apply`는 Task 기준·조합·실적·데이터 품질 목록을 비우고 다시 채운다(기존 실적 삭제)
+- 제품 일정은 그 제품의 유형|프로세스 조합 값으로 역산한다. 조합 값이 없으면 `npd_tasks`의 값(NEW|표준)
+- 「진행사항」 날짜가 기준일보다 앞서면(지난 날짜) 그 날 완료한 것으로 판정한다(`linked.past_as_done`). 기준일 당일·이후 날짜는 변경 예정일
+- 입력 원천(`npd_tasks.input_source`): NEW 시트에 칸이 있는 Task·출시 = 엑셀(19개), 칸 없는 디자인 Task = 디자인 시트(3개, 아직 연동 안 함), 그 외 = 없음(17개). 엑셀·앱이 아닌 Task는 입력(변경 예정일·완료)이 들어오기 전까지 신호등 판정에서 빼고 「확인 필요」로 둔다. 예상일은 계산해 후행으로 지연을 넘긴다. 값이 비어 있으면(변환기 이전 데이터) 예전처럼 모두 판정. 실데이터를 처음 넣으면 Slack 지연 알림이 한꺼번에 나갈 수 있다
+
 엑셀 39개 기준 데이터는 화면의 「엑셀·CSV 가져오기」(.xlsx·CSV) 또는 `POST /api/tasks/import`로 넣는다.
 
 ## 규칙 (엔진)
@@ -67,5 +83,7 @@ python -m app.tools.compare        # 1교시: 엔진 ↔ 엑셀 일치 표 (일�
 - 착수일 = 출시일 − 착수 역산일수(영업일), 종료일 = 출시일 − (착수 역산일수 − 소요일수)
 - D-주차 = 역산 영업일수 ÷ 5 올림 (C-02)
 - 공휴일 미등록 연도의 출시일은 제품 생성 거부 (C-05)
-- 신호등: 초록 = 기한 내 완료 또는 남은 여유 > 기준값 / 노랑 = 남은 여유 ≤ 기준값 / 빨강 = 기한 지남·미완료 또는 지연 완료
+- 예상일정(`backend/app/engine/linked.py`): 선행 Task가 기준보다 늦어진 만큼 후행을 밀고, 사이 여유가 있으면 흡수. 실적 완료일 > 변경 예정일 > 계산 값 순으로 예상 종료를 정함. 예상 출시일 = MAX(출시일, 모든 Task 예상 종료)
+- Task 신호등: 회색 = 완료·해당 없음(그 유형에서 생략) / 빨강 = 예상 종료일 지남·미완료, 고정일 Task(`fixed_end`)가 기준보다 늦음, 예상 종료가 출시일을 넘김 / 노랑 = 기준보다 늦지만 출시일 안, 또는 남은 여유 ≤ 기준값 / 초록 = 그 외
+- 제품 신호등(`/api/products/{id}/schedule`의 `summary`): 출시 영향 > 0 빨강 / 출시 영향 0인데 빨강 Task 있음 노랑 / 그 외 초록
 - 지연 흡수(C-01): 출시일 고정, 늦은 Task 뒤 ~ 「흡수 한도 Task」까지 번호 순으로 여유에서 흡수, 남으면 출시일 영향(영업일·날짜)과 지연 알림. 의사코드는 `backend/app/engine/absorb.py` 머리말

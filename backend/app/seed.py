@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from datetime import date
 from pathlib import Path
 
@@ -62,8 +63,98 @@ def _normalize(header: list, body: list[list]) -> list[dict]:
     return rows
 
 
-def rows_from_upload(filename: str, data: bytes) -> list[dict]:
-    """올린 파일(CSV 또는 엑셀 .xlsx)을 Task 행 dict 목록으로 읽는다. 형식이 틀리면 ValueError."""
+DEFAULT_TYPE_PROCESS = "NEW|표준"
+_TP_RE = re.compile(r"^[^|\s]+\|[^|\s]+$")  # "NEW|표준" 같은 유형|프로세스 제목
+
+
+def _calc_sheet_rows(lines: list[list], type_process: str) -> list[dict] | None:
+    """정본 엑셀 「역산 계산기」 시트의 기준표(No·Task·후행 Task·유형|프로세스별 착수 역산·소요)를 읽는다.
+
+    그런 표가 없는 시트면 None. 표 구조:
+      제목 줄: No | Task | 후행 Task 1 | 후행 Task 2 | … | 유형|프로세스 × N (착수 역산 영업일) | 같은 제목 × N (소요 영업일)
+    - 소요가 0인 Task는 그 유형에서 생략하는 Task라 가져오지 않는다(엑셀도 「-」로 표시).
+    - 선행(predecessors)은 「후행 Task」를 뒤집어 만든다.
+    - 위쪽 일정표(No·담당부서·Task·기준)가 있으면 담당부서는 비고에, 기준은 basis에 넣는다.
+    """
+    def cell(r: list, j: int | None):
+        return r[j] if j is not None and j < len(r) else None
+
+    h = next((i for i, r in enumerate(lines) if any(_cell(v) == "후행 Task 1" for v in r)), None)
+    if h is None:
+        return None
+    head = [_cell(v) for v in lines[h]]
+    try:
+        c_no, c_name = head.index("No"), head.index("Task")
+    except ValueError:
+        raise ValueError("「역산 계산기」 기준표에 No·Task 열 제목이 없습니다") from None
+    c_succ = [j for j, v in enumerate(head) if v.startswith("후행 Task")]
+    tp_cols: dict[str, list[int]] = {}
+    for j, v in enumerate(head):
+        if _TP_RE.match(v):
+            tp_cols.setdefault(v, []).append(j)
+    if type_process not in tp_cols or len(tp_cols[type_process]) < 2:
+        raise ValueError(f"「역산 계산기」 기준표에 {type_process} 열(착수 역산·소요)이 없습니다. "
+                         f"있는 유형|프로세스: {', '.join(tp_cols) or '없음'}")
+    c_start, c_dur = tp_cols[type_process][:2]
+
+    # 위쪽 일정표: No | 담당부서 | Task | 기준 | …
+    dept: dict[int, str] = {}
+    basis: dict[int, str] = {}
+    t = next((i for i, r in enumerate(lines[:h]) if "담당부서" in [_cell(v) for v in r]), None)
+    if t is not None:
+        th = [_cell(v) for v in lines[t]]
+        if "No" in th:
+            for r in lines[t + 1:h]:
+                no = cell(r, th.index("No"))
+                if isinstance(no, (int, float)):
+                    dept[int(no)] = _cell(cell(r, th.index("담당부서")))
+                    if "기준" in th:
+                        basis[int(no)] = _cell(cell(r, th.index("기준")))
+
+    def num(v, what: str, no: int) -> int:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or v < 0:
+            raise ValueError(f"Task {no}의 {what} 값이 0 이상의 정수가 아닙니다: {v!r}")
+        return int(v)
+
+    tasks = []
+    for r in lines[h + 1:]:
+        no, name = cell(r, c_no), _cell(cell(r, c_name))
+        if not isinstance(no, (int, float)) or isinstance(no, bool) or not name:
+            if tasks:
+                break  # 표 끝
+            continue
+        no = int(no)
+        tasks.append(dict(no=no, name=name, start=num(cell(r, c_start), "착수 역산", no),
+                          dur=num(cell(r, c_dur), "소요", no),
+                          succ=[s for s in (_cell(cell(r, j)) for j in c_succ) if s]))
+    if not tasks:
+        raise ValueError("「역산 계산기」 기준표에 Task 행이 없습니다")
+
+    kept = [t for t in tasks if t["dur"] > 0]
+    no_by_name = {t["name"]: t["no"] for t in kept}
+    all_names = {t["name"] for t in tasks}
+    preds: dict[int, list[int]] = {}
+    for t in kept:
+        for s in t["succ"]:
+            if s not in all_names:
+                raise ValueError(f"Task {t['no']}의 후행 Task 「{s}」가 Task 목록에 없습니다")
+            if s in no_by_name:  # 생략된 Task로 가는 연결은 뺀다
+                preds.setdefault(no_by_name[s], []).append(t["no"])
+    return [{
+        "no": str(t["no"]), "name": t["name"], "phase": "",
+        "start_offset": str(t["start"]), "duration": str(t["dur"]),
+        "basis": basis.get(t["no"], ""),
+        "predecessors": ",".join(str(p) for p in sorted(preds.get(t["no"], []))),
+        "buffer_days": "",
+        "note": f"{type_process} 기준" + (f" · 담당 {dept[t['no']]}" if dept.get(t["no"]) else ""),
+    } for t in kept]
+
+
+def rows_from_upload(filename: str, data: bytes, type_process: str = DEFAULT_TYPE_PROCESS) -> list[dict]:
+    """올린 파일(CSV 또는 엑셀 .xlsx)을 Task 행 dict 목록으로 읽는다. 형식이 틀리면 ValueError.
+
+    엑셀은 ① 정본 통합 파일(「역산 계산기」 시트의 type_process 열) ② 첫 줄이 열 제목인 단순 표 둘 다 받는다.
+    """
     ext = Path(filename or "").suffix.lower()
     if ext == ".xls":
         raise ValueError("옛 엑셀 형식(.xls)은 읽을 수 없습니다. 엑셀에서 .xlsx로 저장해 올리세요")
@@ -74,10 +165,15 @@ def rows_from_upload(filename: str, data: bytes) -> list[dict]:
             wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
         except Exception as e:  # noqa: BLE001
             raise ValueError(f"엑셀 파일을 열 수 없습니다: {e}") from e
-        # 필수 열 제목이 첫 줄에 있는 첫 번째 시트를 쓴다
+        sheets = [[list(r) for r in ws.iter_rows(values_only=True)] for ws in wb.worksheets]
+        # 정본 통합 엑셀(「역산 계산기」 시트)이면 그 시트의 기준표를 읽는다
+        for lines in sheets:
+            rows = _calc_sheet_rows(lines, type_process)
+            if rows is not None:
+                return rows
+        # 아니면 필수 열 제목이 첫 줄에 있는 첫 번째 시트를 쓴다
         err: ValueError | None = None
-        for ws in wb.worksheets:
-            lines = [list(r) for r in ws.iter_rows(values_only=True)]
+        for lines in sheets:
             if not lines:
                 continue
             try:

@@ -1,11 +1,12 @@
 import type { Signal } from "@/lib/api";
 
-export const SIGNALS: Signal[] = ["초록", "노랑", "빨강", "확인 필요"];
+export const SIGNALS: Signal[] = ["초록", "노랑", "빨강", "회색", "확인 필요"];
 
 export const SIGNAL_STYLE: Record<Signal, string> = {
   초록: "bg-ok",
   노랑: "bg-warn",
   빨강: "bg-bad",
+  회색: "bg-faint",
   "확인 필요": "bg-none",
 };
 
@@ -13,6 +14,7 @@ const SIGNAL_TEXT: Record<Signal, string> = {
   초록: "text-ok",
   노랑: "text-warn",
   빨강: "text-bad",
+  회색: "text-faint",
   "확인 필요": "text-faint",
 };
 
@@ -20,6 +22,7 @@ const SIGNAL_CHIP: Record<Signal, string> = {
   초록: "bg-ok-soft text-ok",
   노랑: "bg-warn-soft text-warn",
   빨강: "bg-bad-soft text-bad",
+  회색: "bg-sunken text-muted",
   "확인 필요": "bg-sunken text-faint",
 };
 
@@ -112,7 +115,7 @@ export function SignalBar({ counts, className = "" }: { counts: Record<Signal, n
 }
 
 export function countSignals(tasks: { signal: Signal }[]): Record<Signal, number> {
-  const c: Record<Signal, number> = { 초록: 0, 노랑: 0, 빨강: 0, "확인 필요": 0 };
+  const c: Record<Signal, number> = { 초록: 0, 노랑: 0, 빨강: 0, 회색: 0, "확인 필요": 0 };
   tasks.forEach((t) => (c[t.signal] += 1));
   return c;
 }

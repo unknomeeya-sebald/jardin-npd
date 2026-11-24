@@ -41,7 +41,7 @@ export default function TasksPage() {
         <div className="max-h-[62vh] overflow-auto">
           <table className="tbl">
             <thead className="sticky top-0 bg-surface">
-              <tr><th>No</th><th>Task</th><th>단계</th><th className="text-right">착수 역산</th><th className="text-right">소요</th><th className="text-right">완료 역산</th><th>기준</th><th>선행</th><th>비고</th></tr>
+              <tr><th>No</th><th>Task</th><th>단계</th><th className="text-right">착수 역산</th><th className="text-right">소요</th><th className="text-right">완료 역산</th><th>기준</th><th>선행</th><th>담당</th><th>입력 원천</th><th>비고</th></tr>
             </thead>
             <tbody>
               {tasks.map((t) => {
@@ -56,6 +56,8 @@ export default function TasksPage() {
                     <td className="num text-right font-medium">{miss ? "–" : t.start_offset! - t.duration!}</td>
                     <td>{t.basis === "착수" ? <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-semibold text-accent">착수</span> : t.basis}</td>
                     <td className="num">{t.predecessors ?? "–"}</td>
+                    <td className="text-xs">{t.dept ?? "–"}</td>
+                    <td className="text-xs">{t.input_source ? <span className={t.input_source === "엑셀" || t.input_source === "앱" ? "text-ink" : "text-faint"} title={t.input_source === "엑셀" || t.input_source === "앱" ? "" : "입력이 들어오기 전까지 신호등 판정에서 뺍니다"}>{t.input_source}</span> : "–"}</td>
                     <td className="max-w-[28ch] truncate text-xs text-muted" title={t.note ?? ""}>{t.note}</td>
                   </tr>
                 );
@@ -63,7 +65,7 @@ export default function TasksPage() {
             </tbody>
           </table>
         </div>
-        <p className="border-t border-line px-6 py-3 text-xs text-faint">엑셀(.xlsx)·CSV 첫 줄 열 제목: no, name, phase, start_offset, duration, basis, predecessors, buffer_days, note (no·name 필수, 화면의 한글 제목 No·Task·단계·착수 역산·소요·기준·선행·비고도 가능)</p>
+        <p className="border-t border-line px-6 py-3 text-xs text-faint">엑셀(.xlsx)·CSV 첫 줄 열 제목: no, name, phase, start_offset, duration, basis, predecessors, buffer_days, note (no·name 필수, 화면의 한글 제목 No·Task·단계·착수 역산·소요·기준·선행·비고도 가능). 정본 통합 엑셀을 올리면 「역산 계산기」 시트의 NEW|표준 값을 가져오며, 소요가 0인 Task(해당 유형에서 생략)는 빠집니다.</p>
       </Panel>
     </>
   );

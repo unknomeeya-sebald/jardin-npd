@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -49,6 +49,30 @@ def _make_engine():
 
 engine, DB_KIND = _make_engine()
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def ensure_columns(eng=None) -> list[str]:
+    """모델에 새로 생긴 칸을 이미 있는 테이블에 더한다(create_all은 새 테이블만 만든다).
+
+    더하기만 하고 지우거나 바꾸지 않는다. 더한 칸 이름("표.칸") 목록을 돌려준다.
+    """
+    eng = eng or engine
+    insp = inspect(eng)
+    added = []
+    with eng.begin() as c:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            have = {col["name"] for col in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in have:
+                    if not col.nullable:
+                        raise RuntimeError(f"{table.name}.{col.name}: 빈 값을 허용하지 않는 칸은 자동으로 더할 수 없습니다")
+                    c.execute(text(f'ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(eng.dialect)}'))
+                    added.append(f"{table.name}.{col.name}")
+    if added:
+        log.info("칸 추가: %s", ", ".join(added))
+    return added
 
 
 def get_db():
