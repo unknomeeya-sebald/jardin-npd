@@ -44,7 +44,7 @@ export function clearAuth() {
 
 /** 로그인 뒤 돌아갈 곳. 다른 사이트로 보내지 않도록 앱 내부 경로만 허용 */
 export function safeNext(n: string | null): string {
-  return n && n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/login") && !n.startsWith("/signup") ? n : "/gantt";
+  return n && n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/login") && !n.startsWith("/signup") && !n.startsWith("/forgot") ? n : "/gantt";
 }
 
 function subscribe(cb: () => void) {

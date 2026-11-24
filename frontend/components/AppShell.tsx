@@ -10,7 +10,7 @@ import { bizBetween } from "@/lib/dates";
 import { clearAuth, safeNext, useAuth } from "@/lib/auth";
 
 /** 로그인 없이 볼 수 있는 경로 */
-export const PUBLIC_PATHS = ["/login", "/signup"];
+export const PUBLIC_PATHS = ["/login", "/signup", "/forgot"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
@@ -123,7 +123,7 @@ function Alerts() {
         <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-warn" />
         <span>
           Task {health.tasks_needing_check}개는 착수 역산일수·소요일수가 비어 있어 막대를 그리지 못합니다.{" "}
-          <Link href="/tasks" className="font-semibold text-accent underline underline-offset-2">엑셀 기준 CSV 가져오기</Link>
+          <Link href="/tasks" className="font-semibold text-accent underline underline-offset-2">엑셀·CSV 기준 가져오기</Link>
         </span>
       </Notice>,
     );

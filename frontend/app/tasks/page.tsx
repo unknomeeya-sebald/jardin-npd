@@ -18,13 +18,13 @@ export default function TasksPage() {
   const missing = tasks.filter((t) => t.start_offset == null || t.duration == null).length;
   return (
     <>
-      <PageHeader title="Task 기준" desc="엑셀(NB Scheduling)에서 옮긴 기준 데이터입니다. 화면에서는 고치지 않고 CSV 가져오기로만 바꿉니다. 단위는 영업일입니다.">
+      <PageHeader title="Task 기준" desc="엑셀(NB Scheduling)에서 옮긴 기준 데이터입니다. 화면에서는 고치지 않고 파일(엑셀·CSV) 가져오기로만 바꿉니다. 단위는 영업일입니다.">
         <label className="btn cursor-pointer">
-          CSV 가져오기
-          <input type="file" accept=".csv" className="sr-only" onChange={async (e) => {
+          엑셀·CSV 가져오기
+          <input type="file" accept=".xlsx,.xlsm,.csv" className="sr-only" onChange={async (e) => {
             const f = e.target.files?.[0];
             if (!f) return;
-            if (!confirm("Task 기준 데이터 전체와 입력한 실적이 CSV 내용으로 바뀝니다. 계속할까요?")) { e.target.value = ""; return; }
+            if (!confirm(`Task 기준 데이터 전체와 입력한 실적이 「${f.name}」 내용으로 바뀝니다. 계속할까요?`)) { e.target.value = ""; return; }
             const r = await run(() => api.importTasks(f));
             if (r) { alert(`Task ${r.imported}개를 가져왔습니다.`); reloadBase(); }
             e.target.value = "";
@@ -63,7 +63,7 @@ export default function TasksPage() {
             </tbody>
           </table>
         </div>
-        <p className="border-t border-line px-6 py-3 text-xs text-faint">CSV 열: no, name, phase, start_offset, duration, basis, predecessors, buffer_days, note</p>
+        <p className="border-t border-line px-6 py-3 text-xs text-faint">엑셀(.xlsx)·CSV 첫 줄 열 제목: no, name, phase, start_offset, duration, basis, predecessors, buffer_days, note (no·name 필수, 화면의 한글 제목 No·Task·단계·착수 역산·소요·기준·선행·비고도 가능)</p>
       </Panel>
     </>
   );

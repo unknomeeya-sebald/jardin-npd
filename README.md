@@ -22,7 +22,9 @@ DB 접속 정보는 `backend/.env` (git 제외). `DB_FORCE_SQLITE=1`이면 SQLit
 ## 로그인·회원가입
 
 - 화면: `/login`, `/signup`. 로그인하지 않으면 모든 화면이 `/login?next=원래경로`로 이동하고, 로그인 후 원래 경로로 돌아간다
-- API: `POST /api/auth/signup`, `POST /api/auth/login`, `GET /api/auth/me` (`backend/app/auth.py`). `/api/health`를 뺀 모든 API는 `Authorization: Bearer <토큰>` 필요
+- 가입 제한: `ALLOWED_EMAIL_DOMAINS`(기본 `jardin.co.kr`, 쉼표로 여러 개, `*`이면 제한 없음)의 주소만 가입된다. 다른 도메인의 예외 주소는 `ALLOWED_EMAILS`에 적는다. 제한은 가입할 때만 보며 이미 가입한 계정의 로그인은 막지 않는다. 메일 주소의 실제 주인인지는 확인하지 않는다
+- 비밀번호 찾기: `/forgot`. 이메일을 넣으면 6자리 인증 코드를 본인 Slack DM으로 보내고(10분 유효, 5회까지 입력, 60초 뒤 재전송), 코드와 새 비밀번호를 넣으면 바뀐 뒤 바로 로그인된다. Slack 봇에 `users:read.email` 권한이 있어야 하며, Slack 프로필 이메일이 가입 이메일과 같아야 한다
+- API: `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/forgot`, `POST /api/auth/reset`, `GET /api/auth/me` (`backend/app/auth.py`). `/api/health`를 뺀 모든 API는 `Authorization: Bearer <토큰>` 필요
 - 비밀번호는 8자 이상·영문+숫자, scrypt 해시로 `npd_users`에 저장. 토큰은 HMAC 서명, 기본 12시간(`AUTH_TOKEN_TTL_HOURS`)
 - 서명 키 `AUTH_SECRET`은 `backend/.env`에 둔다. 없으면 기동할 때마다 임시 키가 생겨 재기동 시 다시 로그인해야 한다
 
@@ -58,7 +60,7 @@ python -m app.tools.compare        # 1교시: 엔진 ↔ 엑셀 일치 표 (일�
 | `data/tasks_seed.csv` | Task 39행 (`no,name,phase,start_offset,duration,basis,predecessors,buffer_days,note`) | 16개만 값 있음(회신 v08 부록 B, NEW\|표준). 23개 「확인 필요」 |
 | `data/holidays.csv` | 2026–2027 공휴일 28건 | 엑셀 29건과 대조 필요, 공동연차 미입력 |
 
-엑셀 39개 기준 데이터는 화면의 「Task CSV 가져오기」 또는 `POST /api/tasks/import`로 넣는다.
+엑셀 39개 기준 데이터는 화면의 「엑셀·CSV 가져오기」(.xlsx·CSV) 또는 `POST /api/tasks/import`로 넣는다.
 
 ## 규칙 (엔진)
 

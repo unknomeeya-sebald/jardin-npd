@@ -35,6 +35,19 @@ TOKEN_TTL = int(os.getenv("AUTH_TOKEN_TTL_HOURS", "12")) * 3600
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+def _env_set(key: str, default: str = "") -> frozenset[str]:
+    return frozenset(x.strip().lower() for x in os.getenv(key, default).split(",") if x.strip())
+
+
+# 가입 허용: 이 도메인의 주소이거나, 예외로 적어 둔 주소(쉼표로 여러 개). 도메인을 "*"로 두면 제한 없음
+ALLOWED_DOMAINS = _env_set("ALLOWED_EMAIL_DOMAINS", "jardin.co.kr")
+ALLOWED_EMAILS = _env_set("ALLOWED_EMAILS")
+
+
+def email_allowed(email: str) -> bool:
+    return "*" in ALLOWED_DOMAINS or email in ALLOWED_EMAILS or email.rsplit("@", 1)[-1] in ALLOWED_DOMAINS
+
+
 class User(Base):
     __tablename__ = "npd_users"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -42,6 +55,21 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(50))
     password_hash: Mapped[str] = mapped_column(String(300))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+RESET_TTL = 10 * 60        # 인증 코드 유효 시간(초)
+RESET_RESEND_SEC = 60      # 코드 다시 보내기 최소 간격(초)
+RESET_MAX_ATTEMPTS = 5     # 코드 입력 허용 횟수
+
+
+class PasswordReset(Base):
+    """비밀번호 재설정 인증 코드. 사용자당 한 건(다시 요청하면 덮어씀)."""
+    __tablename__ = "npd_password_resets"
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[int] = mapped_column(Integer)  # epoch 초
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    sent_at: Mapped[int] = mapped_column(Integer)     # epoch 초
 
 
 # ---------- 비밀번호 ----------
@@ -139,6 +167,18 @@ class LoginIn(BaseModel):
     password: str
 
 
+class ForgotIn(BaseModel):
+    email: str
+
+
+class ResetIn(BaseModel):
+    email: str
+    code: str = Field(min_length=1, max_length=20)
+    password: str = Field(min_length=8, max_length=128)
+
+    _pw = field_validator("password")(SignupIn._pw.__func__)
+
+
 def user_out(u: User) -> dict:
     return {"id": u.id, "email": u.email, "name": u.name}
 
@@ -148,6 +188,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/signup", status_code=201)
 def signup(body: SignupIn, db: Session = Depends(get_db)):
+    if not email_allowed(body.email):
+        raise HTTPException(403, f"회사 메일(@{', @'.join(sorted(ALLOWED_DOMAINS))})로만 가입할 수 있습니다")
     if db.scalar(select(User).where(User.email == body.email)):
         raise HTTPException(409, "이미 가입된 이메일입니다")
     u = User(email=body.email, name=body.name, password_hash=hash_password(body.password))
@@ -161,6 +203,68 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
     u = db.scalar(select(User).where(User.email == body.email.strip().lower()))
     if u is None or not verify_password(body.password, u.password_hash):
         raise HTTPException(401, "이메일 또는 비밀번호가 맞지 않습니다")
+    return {"token": make_token(u.id), "user": user_out(u)}
+
+
+# ---------- 비밀번호 찾기 ----------
+# 1) /forgot: 6자리 인증 코드를 만들어 본인 Slack DM으로 보낸다(코드는 해시로만 저장)
+# 2) /reset : 코드가 맞으면 새 비밀번호로 바꾸고 바로 로그인시킨다
+def _code_hash(uid: int, code: str) -> str:
+    return hmac.new(SECRET.encode(), f"reset:{uid}:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def send_reset_code(email: str, code: str) -> None:
+    """인증 코드를 본인에게 전달한다(테스트에서 바꿔 끼운다)."""
+    from . import notify
+
+    notify.dm_by_email(
+        email,
+        f":key: *NPD 일정 관리* 비밀번호 재설정 인증 코드: *{code}*\n"
+        f"{RESET_TTL // 60}분 안에 입력하세요. 본인이 요청하지 않았다면 이 메시지를 무시하세요.")
+
+
+@router.post("/forgot")
+def forgot(body: ForgotIn, db: Session = Depends(get_db)):
+    from .notify import SlackUserNotFound
+
+    u = db.scalar(select(User).where(User.email == body.email.strip().lower()))
+    if u is None:
+        raise HTTPException(404, "가입되지 않은 이메일입니다. 회원가입을 먼저 하세요")
+    now = int(time.time())
+    row = db.get(PasswordReset, u.id)
+    if row is not None and now - row.sent_at < RESET_RESEND_SEC:
+        raise HTTPException(429, f"인증 코드를 방금 보냈습니다. {RESET_RESEND_SEC - (now - row.sent_at)}초 뒤에 다시 시도하세요")
+    code = f"{secrets.randbelow(10**6):06d}"
+    try:
+        send_reset_code(u.email, code)
+    except SlackUserNotFound:
+        raise HTTPException(422, "이 이메일로 등록된 Slack 계정이 없어 인증 코드를 보낼 수 없습니다. 관리자에게 문의하세요") from None
+    except Exception as e:  # noqa: BLE001
+        log.warning("비밀번호 재설정 코드 전송 실패: %s", e)
+        raise HTTPException(503, "인증 코드를 보내지 못했습니다. 관리자에게 문의하세요") from e
+    if row is None:
+        row = PasswordReset(user_id=u.id)
+        db.add(row)
+    row.code_hash, row.expires_at, row.attempts, row.sent_at = _code_hash(u.id, code), now + RESET_TTL, 0, now
+    db.commit()
+    return {"sent": True, "via": "slack", "ttl_min": RESET_TTL // 60}
+
+
+@router.post("/reset")
+def reset(body: ResetIn, db: Session = Depends(get_db)):
+    bad = HTTPException(400, "인증 코드가 맞지 않거나 만료되었습니다. 코드를 다시 받으세요")
+    u = db.scalar(select(User).where(User.email == body.email.strip().lower()))
+    row = db.get(PasswordReset, u.id) if u is not None else None
+    if row is None or row.expires_at < time.time() or row.attempts >= RESET_MAX_ATTEMPTS:
+        raise bad
+    if not hmac.compare_digest(row.code_hash, _code_hash(u.id, body.code.strip())):
+        row.attempts += 1
+        db.commit()
+        left = RESET_MAX_ATTEMPTS - row.attempts
+        raise HTTPException(400, f"인증 코드가 맞지 않습니다 (남은 횟수 {left}회)") if left > 0 else bad
+    u.password_hash = hash_password(body.password)
+    db.delete(row)
+    db.commit()
     return {"token": make_token(u.id), "user": user_out(u)}
 
 

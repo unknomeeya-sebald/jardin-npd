@@ -151,6 +151,10 @@ export const api = {
     req<AuthRes>("/api/auth/signup", { method: "POST", body: JSON.stringify(b) }),
   login: (b: { email: string; password: string }) =>
     req<AuthRes>("/api/auth/login", { method: "POST", body: JSON.stringify(b) }),
+  forgot: (b: { email: string }) =>
+    req<{ sent: boolean; via: string; ttl_min: number }>("/api/auth/forgot", { method: "POST", body: JSON.stringify(b) }),
+  resetPassword: (b: { email: string; code: string; password: string }) =>
+    req<AuthRes>("/api/auth/reset", { method: "POST", body: JSON.stringify(b) }),
   me: () => req<User>("/api/auth/me"),
   actions: () => req<ActionItem[]>("/api/actions"),
   actionSources: () => req<ActionSources>("/api/actions/sources"),

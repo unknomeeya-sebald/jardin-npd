@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import csv
-import io
 import os
 from contextlib import asynccontextmanager
 from datetime import date
@@ -20,7 +18,7 @@ from .engine.calendar import BusinessCalendar, HolidayNotRegistered
 from .engine.concurrent import overlaps
 from .engine.status import judge
 from .models import Actual, Holiday, Product, Setting, Task
-from .seed import parse_task_rows, seed
+from .seed import parse_task_rows, rows_from_upload, seed
 
 Base.metadata.create_all(engine)
 with SessionLocal() as _s:
@@ -148,12 +146,13 @@ def list_tasks(db: Session = Depends(get_db)):
 
 @api.post("/api/tasks/import")
 async def import_tasks(file: UploadFile, db: Session = Depends(get_db)):
-    """엑셀에서 옮긴 Task 기준 데이터 CSV로 전체를 바꾼다(열: no,name,phase,start_offset,duration,basis,predecessors,buffer_days,note)."""
-    raw = (await file.read()).decode("utf-8-sig")
+    """Task 기준 데이터 파일(CSV 또는 엑셀 .xlsx)로 전체를 바꾼다(열: no,name,phase,start_offset,duration,basis,predecessors,buffer_days,note)."""
     try:
-        rows = parse_task_rows(list(csv.DictReader(io.StringIO(raw))))
+        rows = parse_task_rows(rows_from_upload(file.filename or "", await file.read()))
     except (KeyError, ValueError) as e:
-        raise HTTPException(400, f"CSV 형식 오류: {e}") from e
+        raise HTTPException(400, f"파일 형식 오류: {e}") from e
+    if len({t.no for t in rows}) != len(rows):
+        raise HTTPException(400, "파일 형식 오류: no(번호)가 겹치는 행이 있습니다")
     db.execute(delete(Actual))
     db.execute(delete(Task))
     db.add_all(rows)

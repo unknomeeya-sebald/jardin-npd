@@ -52,22 +52,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center px-5 py-12">
-      <div className="w-full max-w-[380px]">
-        <div className="mb-7 flex items-center gap-2.5">
-          <svg viewBox="0 0 32 32" className="h-9 w-9" aria-hidden>
-            <rect width="32" height="32" rx="9" className="fill-accent" />
-            <rect x="6" y="9" width="14" height="3" rx="1.5" className="fill-accent-ink" opacity="0.55" />
-            <rect x="11" y="14.5" width="11" height="3" rx="1.5" className="fill-accent-ink" opacity="0.8" />
-            <rect x="16" y="20" width="8" height="3" rx="1.5" className="fill-accent-ink" />
-            <rect x="25.5" y="7" width="1.6" height="18" rx="0.8" className="fill-accent-ink" />
-          </svg>
-          <div className="leading-tight">
-            <div className="text-[15px] font-semibold tracking-[-0.01em] text-ink">NPD 일정 관리</div>
-            <div className="text-[11px] text-faint">출시일에서 거꾸로 짜는 일정</div>
-          </div>
-        </div>
-
+    <AuthFrame>
         <form onSubmit={submit} className="panel space-y-4 p-6" noValidate>
           <div>
             <h1 className="text-[20px] font-semibold tracking-[-0.01em] text-ink">{t.title}</h1>
@@ -95,7 +80,36 @@ export default function AuthForm({ mode }: { mode: Mode }) {
             <Link href={next === "/gantt" ? t.altHref : `${t.altHref}?next=${encodeURIComponent(next)}`}
                   className="font-semibold text-accent underline-offset-2 hover:underline">{t.altLink}</Link>
           </p>
+          {mode === "login" && (
+            <p className="text-center text-[13px] text-muted">
+              <Link href="/forgot" className="font-semibold text-accent underline-offset-2 hover:underline">비밀번호를 잊으셨나요?</Link>
+            </p>
+          )}
         </form>
+    </AuthFrame>
+  );
+}
+
+/** 로그인·회원가입·비밀번호 찾기 화면의 공통 틀(로고 + 테마 전환) */
+export function AuthFrame({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center px-5 py-12">
+      <div className="w-full max-w-[380px]">
+        <div className="mb-7 flex items-center gap-2.5">
+          <svg viewBox="0 0 32 32" className="h-9 w-9" aria-hidden>
+            <rect width="32" height="32" rx="9" className="fill-accent" />
+            <rect x="6" y="9" width="14" height="3" rx="1.5" className="fill-accent-ink" opacity="0.55" />
+            <rect x="11" y="14.5" width="11" height="3" rx="1.5" className="fill-accent-ink" opacity="0.8" />
+            <rect x="16" y="20" width="8" height="3" rx="1.5" className="fill-accent-ink" />
+            <rect x="25.5" y="7" width="1.6" height="18" rx="0.8" className="fill-accent-ink" />
+          </svg>
+          <div className="leading-tight">
+            <div className="text-[15px] font-semibold tracking-[-0.01em] text-ink">NPD 일정 관리</div>
+            <div className="text-[11px] text-faint">출시일에서 거꾸로 짜는 일정</div>
+          </div>
+        </div>
+
+        {children}
 
         <div className="mx-auto mt-6 max-w-[240px]"><ThemeSwitch /></div>
       </div>
@@ -103,7 +117,7 @@ export default function AuthForm({ mode }: { mode: Mode }) {
   );
 }
 
-function Input({ label, value, onChange, hint, ...rest }: {
+export function Input({ label, value, onChange, hint, ...rest }: {
   label: string; value: string; onChange: (v: string) => void; hint?: React.ReactNode;
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange">) {
   return (

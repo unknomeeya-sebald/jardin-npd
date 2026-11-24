@@ -18,6 +18,7 @@ import logging
 import os
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime
 
@@ -91,6 +92,38 @@ def post(text: str) -> None:
                 "channel_not_found": " (SLACK_CHANNEL 확인, 비공개 채널이면 봇 초대 필요)",
                 "invalid_auth": " (SLACK_BOT_TOKEN 확인)"}.get(res.get("error", ""), "")
         raise RuntimeError(f"Slack API 오류: {res.get('error')}{hint}")
+
+
+class SlackUserNotFound(RuntimeError):
+    """그 이메일을 쓰는 Slack 사용자가 없다."""
+
+
+def _slack_api(method: str, payload: dict | None = None, query: dict | None = None) -> dict:
+    url = f"https://slack.com/api/{method}" + (f"?{urllib.parse.urlencode(query)}" if query else "")
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"Content-Type": "application/json; charset=utf-8", "Authorization": f"Bearer {BOT_TOKEN}"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read())
+
+
+def dm_by_email(email: str, text: str) -> None:
+    """이메일로 Slack 사용자를 찾아 개인 메시지(DM)를 보낸다. 실패하면 예외.
+
+    봇 권한 users:read.email(사용자 찾기)·chat:write(보내기)가 필요하다.
+    """
+    if not BOT_TOKEN:
+        raise RuntimeError("Slack 봇 토큰 없음: SLACK_BOT_TOKEN이 필요합니다")
+    res = _slack_api("users.lookupByEmail", query={"email": email})
+    if not res.get("ok"):
+        err = res.get("error")
+        if err == "users_not_found":
+            raise SlackUserNotFound(email)
+        hint = " (Slack 앱에 users:read.email 권한을 추가하고 다시 설치하세요)" if err == "missing_scope" else ""
+        raise RuntimeError(f"Slack 사용자 찾기 오류: {err}{hint}")
+    res = _slack_api("chat.postMessage", {"channel": res["user"]["id"], "text": text, "unfurl_links": False})
+    if not res.get("ok"):
+        raise RuntimeError(f"Slack DM 오류: {res.get('error')}")
 
 
 _lock = threading.Lock()
